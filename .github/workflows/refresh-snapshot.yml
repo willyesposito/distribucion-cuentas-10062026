@@ -1,0 +1,56 @@
+name: Refresh snapshot desde Monday
+
+on:
+  schedule:
+    - cron: "0 10 * * 1-5" # 07:00 AR (UTC-3), lunes a viernes
+  workflow_dispatch: {} # botón "Run workflow" — el "buscalo ahora" desde GitHub
+
+permissions:
+  contents: write
+  actions: write # para re-disparar deploy.yml tras el commit
+
+concurrency:
+  group: refresh-snapshot
+  cancel-in-progress: true
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Fetch Matrix → data/snapshot.json
+        env:
+          MONDAY_API_TOKEN: ${{ secrets.MONDAY_API_TOKEN }}
+        run: node fetch_monday.mjs
+
+      - name: Fetch cut-offs → data/cutoffs.json
+        env:
+          MONDAY_API_TOKEN: ${{ secrets.MONDAY_API_TOKEN }}
+        run: node scripts/fetch_cutoffs.mjs
+
+      - name: Commit si hay cambios
+        id: commit
+        run: |
+          git config user.name "snapshot-bot"
+          git config user.email "actions@github.com"
+          git add data/
+          if git diff --cached --quiet; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            echo "Sin cambios en los datos."
+          else
+            git commit -m "data: snapshot $(date -u +%F)"
+            git push
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      # Los push hechos con GITHUB_TOKEN no disparan otros workflows:
+      # re-disparamos el deploy explícitamente (deploy.yml ya tiene workflow_dispatch).
+      - name: Re-disparar deploy a Pages
+        if: steps.commit.outputs.changed == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh workflow run deploy.yml --ref main

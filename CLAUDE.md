@@ -3,7 +3,7 @@
 Sandbox para simular reasignaciones de clientes entre analistas/jefaturas y reacomodar fechas de proceso. **Solo lectura sobre Monday**: el output de cada sesión es un "Plan de Cambios" para aplicar a mano. NUNCA usar mutaciones de la API de Monday (create/change/delete) sobre los tableros de producción.
 
 ## Estado del proyecto
-- **MVP entregado (v1)**: `app/simulador-reorg.jsx` — vista de equipo por jefatura, score de carga con pesos ajustables, reasignación por selector, comparador antes/después, plan de cambios exportable. Datos embebidos como snapshot del 10/06/2026.
+- **MVP entregado (v1)**: `src/simulador-reorg.jsx` — vista de equipo por jefatura, score de carga con pesos ajustables, reasignación por selector, comparador antes/después, plan de cambios exportable, filtro de analistas activos, slots de liquidación editables por cliente (Cut Off / v1 / Comentarios v1 / v2 / Aprobación). Datos embebidos como snapshot del 10/06/2026. Build con Vite + deploy automático a GitHub Pages vía `.github/workflows/deploy.yml`.
 - **v2 (pendiente)**: línea de tiempo/calendario por analista con detección de choques de hitos (mismo día o ventana de 2–3 días hábiles, feriados AR). Requiere el pipeline de cronogramas descripto abajo.
 - Regla de trabajo con el usuario: **brainstorming y acuerdo antes de codear cualquier feature nueva**. Presentar opciones con clasificación 1–10. Español rioplatense. Citar siempre tablero/columna de cada dato; nunca inventar valores.
 
@@ -78,11 +78,15 @@ Hitos críticos = Envío de Liquidación (v1/v2/quincenas) y cortes de novedades
 
 ## Estructura
 ```
-app/simulador-reorg.jsx     # UI (single-file React, branding H&A apps internas)
-scripts/fetch_monday.mjs    # baja la Matrix → data/snapshot.json (solo queries, cero mutaciones)
-data/snapshot.json          # último snapshot crudo con metadata de fecha
-data/feriados-ar.json       # (v2) feriados argentinos del año
-CLAUDE.md                   # este archivo
+src/simulador-reorg.jsx       # UI (componente principal, branding H&A apps internas)
+src/main.jsx                  # entry point Vite (monta SimuladorReorg en #root)
+index.html                    # template HTML (carga Source Sans Pro)
+vite.config.js                # base path '/distribucion-cuentas/' para GH Pages
+package.json                  # deps: react 18 + vite 5
+.github/workflows/deploy.yml  # build + deploy automático a GitHub Pages en cada push a main
+fetch_monday.mjs              # baja la Matrix (solo queries, cero mutaciones)
+feriados-ar.json              # (v2) feriados argentinos del año
+CLAUDE.md                     # este archivo
 ```
 
 ## Branding (apps internas H&A — ver skill hya-brand para el detalle)

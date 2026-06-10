@@ -3,5 +3,5 @@ import react from "@vitejs/plugin-react";
 
 export default defineConfig({
   plugins: [react()],
-  base: "/distribucion-cuentas/",
+  base: "/distribucion-cuentas-10062026/",
 });

@@ -4,7 +4,8 @@ Sandbox para simular reasignaciones de clientes entre analistas/jefaturas y reac
 
 ## Estado del proyecto
 - **MVP entregado (v1)**: `src/simulador-reorg.jsx` — vista de equipo por jefatura, score de carga con pesos ajustables, reasignación por selector, comparador antes/después, plan de cambios exportable, filtro de analistas activos, slots de liquidación editables por cliente (Cut Off / v1 / Comentarios v1 / v2 / Aprobación). Datos embebidos como snapshot del 10/06/2026. Build con Vite + deploy automático a GitHub Pages vía `.github/workflows/deploy.yml`.
-- **v2 (pendiente)**: línea de tiempo/calendario por analista con detección de choques de hitos (mismo día o ventana de 2–3 días hábiles, feriados AR). Requiere el pipeline de cronogramas descripto abajo.
+- **v2 entregado (parcial)**: motor de ciclos puro `src/ciclos.js` (días hábiles + feriados AR, eventos fechados a partir de cut-off, carga diaria en horas, choques duro/advertencia, indicadores), heatmap analista × día `src/HeatmapCarga.jsx` con gradiente celeste→amarillo→rojo, indicadores antes/después (pico, choques duros, advertencias), toggle ×complejidad (factor C/3), panel de pendientes (clientes sin cut-off), popover de detalle por celda. Cut-offs por liquidación cargados a mano vía `<input type="date">` en el panel del cliente. Horas default por etapa (fuente PO Pilar 8179343211, `n_meros__1` = horas, confirmado por usuario): Mensual = Cut Off 1 · v1 6 · Comentarios 3 · v2 6 · Aprobación 2; Quincena = 1 · 3 · 2 · 3 · 1.
+- **v2 pendiente / pausado**: (a) integración Monday API: workflow `.github/workflows/refresh-snapshot.yml` ya pusheado, secret `MONDAY_API_TOKEN` NO creado todavía; botón "Aplicar cut-offs de Monday" del paso 3 del PLAN-V2.md sin implementar. (b) Escenarios guardados en localStorage. (c) Sugeridor greedy. Ver `PLAN-V2.md` para el detalle y `memory/v2_alcance_sin_api.md` para el motivo de la pausa de (a).
 - Regla de trabajo con el usuario: **brainstorming y acuerdo antes de codear cualquier feature nueva**. Presentar opciones con clasificación 1–10. Español rioplatense. Citar siempre tablero/columna de cada dato; nunca inventar valores.
 
 ## Fuentes de datos (Monday, solo lectura)
@@ -78,15 +79,20 @@ Hitos críticos = Envío de Liquidación (v1/v2/quincenas) y cortes de novedades
 
 ## Estructura
 ```
-src/simulador-reorg.jsx       # UI (componente principal, branding H&A apps internas)
-src/main.jsx                  # entry point Vite (monta SimuladorReorg en #root)
-index.html                    # template HTML (carga Source Sans Pro)
-vite.config.js                # base path '/distribucion-cuentas/' para GH Pages
-package.json                  # deps: react 18 + vite 5
-.github/workflows/deploy.yml  # build + deploy automático a GitHub Pages en cada push a main
-fetch_monday.mjs              # baja la Matrix (solo queries, cero mutaciones)
-feriados-ar.json              # (v2) feriados argentinos del año
-CLAUDE.md                     # este archivo
+src/simulador-reorg.jsx               # UI (componente principal, branding H&A apps internas)
+src/HeatmapCarga.jsx                  # (v2) calendario analista × día + indicadores antes/después + popover
+src/ciclos.js                         # (v2) motor puro: hábiles, eventos, carga, choques, indicadores
+src/main.jsx                          # entry point Vite (monta SimuladorReorg en #root)
+index.html                            # template HTML (carga Source Sans Pro)
+vite.config.js                        # base path '/distribucion-cuentas-10062026/' para GH Pages
+package.json                          # deps: react 18 + vite 5
+.github/workflows/deploy.yml          # build + deploy a GitHub Pages en cada push a main
+.github/workflows/refresh-snapshot.yml# (v2, sin habilitar) cron L-V 07:00 AR + dispatch; requiere secret MONDAY_API_TOKEN
+fetch_monday.mjs                      # baja la Matrix (solo queries, cero mutaciones)
+scripts/fetch_cutoffs.mjs             # (v2) descubre boards fuente y baja cortes → data/cutoffs.json
+data/feriados-ar.json                 # (v2) feriados argentinos del año
+PLAN-V2.md                            # plan detallado de la v2 + decisiones de diseño del heatmap
+CLAUDE.md                             # este archivo
 ```
 
 ## Branding (apps internas H&A — ver skill hya-brand para el detalle)

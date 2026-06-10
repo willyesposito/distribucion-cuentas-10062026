@@ -1,4 +1,8 @@
 import { useState, useMemo } from "react";
+import HeatmapCarga from "./HeatmapCarga.jsx";
+import feriadosData from "../data/feriados-ar.json";
+
+const FERIADOS = new Set(feriadosData.feriados);
 
 // ============================================================
 // SNAPSHOT DE DATOS — Matrix Complejidad Clientes (board 6552205482)
@@ -59,6 +63,10 @@ const ANALISTAS = [
 ];
 
 const ORDEN_JEFATURAS = ["Candela", "Melina", "Matías", "Franco"];
+
+// Asignación base: cada cliente con su consultor original. Sirve para el comparador
+// antes/después del score y para los indicadores antes/después del heatmap.
+const BASE_ASIGNACION = Object.fromEntries(CLIENTES.map(c => [c.id, c.consultor]));
 
 const VALIDACIONES = [
   "Toyota tiene 8.000 pays (vs. 623 del segundo más alto): domina la normalización de Pays. Usá el toggle para excluirlo del cálculo y comparar.",
@@ -147,6 +155,8 @@ export default function SimuladorReorg() {
   const [analistasExcluidos, setAnalistasExcluidos] = useState(() => new Set());
   const [verAnalistas, setVerAnalistas] = useState(false);
   const [slaQuincena, setSlaQuincena] = useState(1); // días hábiles por defecto entre instancias quincenales (24 hs = 1)
+  const [cutoffs, setCutoffs] = useState({}); // {liqId: "YYYY-MM-DD"} — manual; alimenta el heatmap
+  const [ajustarPorComplejidad, setAjustarPorComplejidad] = useState(false);
   const [configClientes, setConfigClientes] = useState(() => {
     return Object.fromEntries(CLIENTES.map(c => {
       const tipoLiq = inferirTipo(c.tipo);
@@ -197,7 +207,7 @@ export default function SimuladorReorg() {
   };
 
   const { scores, baseScores, media } = useMemo(() => {
-    const base = cargaPor(Object.fromEntries(CLIENTES.map(c => [c.id, c.consultor])));
+    const base = cargaPor(BASE_ASIGNACION);
     const cur = cargaPor(asignacion);
     // Denominadores FIJOS del escenario base → los scores son comparables antes/después
     const dComp = Math.max(...Object.values(base).map(x => x.comp), 1);
@@ -233,7 +243,18 @@ export default function SimuladorReorg() {
     const c = CLIENTES.find(x => x.id === clienteId);
     setAsignacion(prev => ({ ...prev, [clienteId]: c.consultor }));
   };
-  const reiniciar = () => { setAsignacion(Object.fromEntries(CLIENTES.map(c => [c.id, c.consultor]))); setSeleccionado(null); };
+  const reiniciar = () => { setAsignacion(BASE_ASIGNACION); setSeleccionado(null); };
+
+  // Setter de cut-off por liquidación (consumido por el panel del cliente y el heatmap).
+  const setCutoff = (liqId, isoFecha) => {
+    setCutoffs(prev => {
+      if (!isoFecha) {
+        const { [liqId]: _, ...rest } = prev;
+        return rest;
+      }
+      return { ...prev, [liqId]: isoFecha };
+    });
+  };
 
   // ---- Acciones sobre configClientes (tipo de liquidación + instancias) ----
   const setTipoLiqCliente = (clienteId, nuevoTipo) => {
@@ -349,7 +370,7 @@ export default function SimuladorReorg() {
         <div style={{ width: 44, height: 44, borderRadius: "50%", background: C.celeste, display: "inline-flex", alignItems: "center", justifyContent: "center", color: "#FFF", fontWeight: 700, fontSize: 16, letterSpacing: "-0.5px", fontStyle: "italic" }}>H&A</div>
         <div style={{ flex: 1, minWidth: 220 }}>
           <h1 style={{ margin: 0, fontSize: 19, fontWeight: 700, color: "#FFF" }}>Simulador de Reorganización — Payroll</h1>
-          <div style={{ fontSize: 12, color: C.txt3 }}>Sandbox de reasignaciones · nunca escribe en Monday · MVP (calendario de fechas llega en v2)</div>
+          <div style={{ fontSize: 12, color: C.txt3 }}>Sandbox de reasignaciones · nunca escribe en Monday · v2 con calendario de carga (cut-offs manuales)</div>
         </div>
         <Badge color={C.celeste}>Snapshot Matrix · {SNAPSHOT_DATE}</Badge>
       </header>
@@ -478,6 +499,13 @@ export default function SimuladorReorg() {
               <div key={liq.id} style={{ marginBottom: 12, padding: "10px 12px", background: C.off, borderRadius: 10, border: `1px solid ${C.borde}` }}>
                 <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8, flexWrap: "wrap" }}>
                   <input value={liq.etiqueta} onChange={e => renombrarLiquidacion(clienteSel.id, liq.id, e.target.value)} style={{ ...font, fontSize: 13, fontWeight: 700, color: C.navy, border: "none", background: "transparent", borderBottom: `1px dashed ${C.borde}`, padding: "2px 4px", flex: 1, minWidth: 140 }} />
+                  <label title="Fecha del corte de novedades — ancla del ciclo en el calendario" style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: 11, fontWeight: 700, color: C.txt2 }}>
+                    <span style={{ textTransform: "uppercase", letterSpacing: "0.06em", fontSize: 10, color: C.celeste }}>Cut Off</span>
+                    <input type="date" value={cutoffs[liq.id] || ""} onChange={e => setCutoff(liq.id, e.target.value)} style={{ ...font, padding: "3px 6px", border: `1px solid ${C.borde}`, borderRadius: 8, fontSize: 12, color: C.navy }} />
+                    {cutoffs[liq.id] && (
+                      <button onClick={() => setCutoff(liq.id, "")} title="Quitar cut-off" style={{ ...font, background: "none", border: "none", color: C.txt3, cursor: "pointer", fontSize: 13, padding: "0 4px", lineHeight: 1 }}>×</button>
+                    )}
+                  </label>
                   <button onClick={() => eliminarLiquidacion(clienteSel.id, liq.id)} title="Eliminar liquidación" style={{ ...font, background: "none", border: `1px solid ${C.borde}`, borderRadius: 9999, padding: "3px 10px", fontSize: 11, fontWeight: 600, color: C.err, cursor: "pointer" }}>
                     Eliminar
                   </button>
@@ -612,6 +640,24 @@ export default function SimuladorReorg() {
             </div>
           </section>
         ))}
+
+        {/* Heatmap de carga (v2) */}
+        <HeatmapCarga
+          clientes={incluidos}
+          baseAsignacion={BASE_ASIGNACION}
+          asignacion={asignacion}
+          configClientes={configClientes}
+          cutoffs={cutoffs}
+          feriadosSet={FERIADOS}
+          analistasVisibles={analistasVisibles}
+          nombresVisibles={nombresVisibles}
+          ordenJefaturas={ORDEN_JEFATURAS}
+          ajustarPorComplejidad={ajustarPorComplejidad}
+          setAjustarPorComplejidad={setAjustarPorComplejidad}
+          abrirCliente={setSeleccionado}
+          C={C}
+          font={font}
+        />
 
         {/* Plan de cambios */}
         <section style={{ marginTop: 30, background: "#FFF", border: `1px solid ${C.borde}`, borderRadius: 14, overflow: "hidden", boxShadow: "0 1px 4px rgba(30,58,95,0.06)" }}>

@@ -100,3 +100,44 @@ const [mesAncla, setMesAncla] = useState("2026-07");   // mes de los cut-offs qu
 - [ ] Dos v1 de clientes distintos el mismo día sobre el mismo analista marcan choque duro.
 - [ ] Mover un cliente actualiza heatmap + indicadores + plan de cambios en el mismo click.
 - [ ] `npm run build` pasa y la Action refresh corre en verde con el secret cargado.
+
+---
+
+## Decisiones de diseño — Heatmap (acordado 10/06/2026)
+
+Las **opciones elegidas van en negrita**; las alternativas se conservan acá por si en una próxima iteración hay que cambiar.
+
+### Q1 — Ubicación en la UI
+- **A) Sección plegable nueva entre las tarjetas de jefatura y el plan de cambios, abierta por default.** [elegida]
+- B) Tab/pestaña superior "Equipo / Calendario".
+- C) Sección al final, después del plan de cambios.
+- D) Drawer/modal a pantalla completa con botón "Ver calendario".
+
+### Q2 — Rango y columnas
+- **A) Una columna por día hábil (omite findes/feriados); rango automático = min..max de los eventos generados; scroll horizontal si no entra. Sin `mesAncla` (se dropea del estado planeado).** [elegida]
+- B) Igual que A pero con findes/feriados como columnas grises angostas.
+- C) Selector de mes ancla + flechas ← →; el heatmap se acota al mes.
+- D) Agrupar por semana con drill-down al click.
+
+### Q3 — Coloreado de celdas
+- **A) Gradiente continuo celeste `#00ACD4` → amarillo `#F59E0B` → rojo `#E85518`, proporcional a `horas / maxHorasDia`. Número de horas centrado, color de texto según contraste.** [elegida]
+- B) 4 escalones discretos (vacío / liviano / medio / cargado).
+- C) Solo número de horas, sin fondo de color.
+
+### Q4 — Indicadores antes/después
+- **A) Banda de chips arriba del heatmap, antes vs. después lado a lado: Pico (analista · fecha · horas), Choques duros, Advertencias, Desvío de scores; delta en color.** [elegida]
+- B) Sección comparador separada (no en heatmap).
+- C) Indicadores dentro de cada tarjeta de jefatura, sin banda dedicada.
+
+### Q5 — Pendientes (clientes sin cut-off)
+- **A) Panel plegable arriba del heatmap (abierto si hay pendientes), con lista de clientes y botón "Cargar cut-off" que abre el panel de liquidaciones del cliente.** [elegida]
+- B) Banner amarillo + modal con la lista.
+- C) Sin panel; chips en las tarjetas de jefatura.
+
+### Q6 — Qué eventos suman horas
+- **Confirmado:** todos los eventos (Cut Off, v1, Comentarios v1, v2, Aprobación) suman en `cargaDiaria`. La marca `critico` solo se usa en `detectarChoques`.
+
+### Q7 — Click en celda
+- **A) Popover propio (div absoluto) con la lista de eventos del día/analista: cliente · liq · instancia · horas.** [elegida]
+- B) Tooltip nativo con texto plano.
+- C) Drawer lateral con detalle + atajos.

@@ -4,6 +4,7 @@ import PanelCutoffs from "./PanelCutoffs.jsx";
 import feriadosData from "../data/feriados-ar.json";
 
 const FERIADOS = new Set(feriadosData.feriados);
+const STORAGE_KEY = "reorg:escenarios";
 
 // ============================================================
 // SNAPSHOT DE DATOS — Matrix Complejidad Clientes (board 6552205482)
@@ -32,8 +33,8 @@ const CLIENTES = [
   { id: "6683601072", nombre: "Marval", consultor: "Araceli", jefatura: "Melina", complejidad: 4, pays: 580, tipo: "Mensual, Bonos, Liq. Adicionales" },
   { id: "6682992485", nombre: "Sportline (4 Entidades)", consultor: "Daiana", jefatura: "Melina", complejidad: 4, pays: 623, tipo: null },
   { id: "6682992420", nombre: "Copetro", consultor: "Araceli", jefatura: "Melina", complejidad: 4, pays: 120, tipo: "Mixto (verificado en crono: mensual + 2 quincenas)" },
-  { id: "6682992697", nombre: "AYSA (Externos)", consultor: "Agustina C.", jefatura: "Melina", complejidad: 1, pays: 2, tipo: null },
-  { id: "6683370671", nombre: "Ford (Externos)", consultor: "Agustina C.", jefatura: "Melina", complejidad: 1, pays: 18, tipo: null },
+  { id: "6682992697", nombre: "AYSA (Externos)", consultor: "Agustina C.", jefatura: "Melina", complejidad: 1, pays: 2, tipo: "Quincenal" },
+  { id: "6683370671", nombre: "Ford (Externos)", consultor: "Agustina C.", jefatura: "Melina", complejidad: 1, pays: 18, tipo: "Quincenal" },
   { id: "6682992591", nombre: "DLA (Mixplay)", consultor: "Agustina C.", jefatura: "Melina", complejidad: 3, pays: 280, tipo: "Bonos, Mensual, Anticipos" },
   { id: "6682992722", nombre: "Carrier (2 Entidades)", consultor: "Agustina C.", jefatura: "Melina", complejidad: 4, pays: 424, tipo: "Mensual (verificado en crono, corte ~día 20)" },
   { id: "6682992685", nombre: "Lowsedo (3 Entidades)", consultor: "Sergio", jefatura: "Matías", complejidad: 2, pays: 72, tipo: "Mensual" },
@@ -47,7 +48,6 @@ const CLIENTES = [
 ];
 
 // Roster de analistas (consultores reales + targets válidos de reasignación).
-// Cambio 10/06/2026: Pablo eliminado del roster; Team TASA reemplazado por Franco + Eileen + Laura.
 const ANALISTAS = [
   { nombre: "Candela", jefatura: "Candela" },
   { nombre: "Micaela", jefatura: "Candela" },
@@ -65,14 +65,12 @@ const ANALISTAS = [
 
 const ORDEN_JEFATURAS = ["Candela", "Melina", "Matías", "Franco"];
 
-// Asignación base: cada cliente con su consultor original. Sirve para el comparador
-// antes/después del score y para los indicadores antes/después del heatmap.
 const BASE_ASIGNACION = Object.fromEntries(CLIENTES.map(c => [c.id, c.consultor]));
 
 const VALIDACIONES = [
   "Toyota tiene 8.000 pays (vs. 623 del segundo más alto): domina la normalización de Pays. Usá el toggle para excluirlo del cálculo y comparar.",
   "Toyota se modela como equipo Franco + Eileen + Laura: la carga del cliente se reparte 1/3 entre los tres mientras esté asignado a Franco. Si lo movés a otro analista, todo va al destino.",
-  "10 de los 26 clientes no tienen Tipo de Liquidación cargado (tipo_de_liquidaci_n__1 vacío); el ciclo real se infiere del crono en la v2.",
+  "10 clientes sin Tipo de Liquidación en Monday (tipo vacío): arrancan como Mensual por default. AYSA y Ford identificados como quincenales. Ajustá en el panel de cada cliente.",
   "Plastic Omnium Florida: el patrón quincenal está sin verificar (no se llegó al board fuente). Se asume patrón Pilar hasta confirmar.",
   "El corte de novedades del mes en curso puede no estar cargado todavía en el crono fuente (caso Carrier): cuando falte, la v2 pide el cut-off.",
   "El tipo de liquidación de cada cliente arranca con una inferencia del campo `tipo` (Matrix). Confirmá / corregí en el panel del cliente para fijar instancias y SLA.",
@@ -108,7 +106,7 @@ const INSTANCIAS_QUINCENA = (slaQ) => [
 
 // IDs de liquidación determinísticos (clienteId:tipo): los cut-offs se guardan
 // keyed por liq.id, así que con IDs estables sobreviven a regeneraciones del tipo
-// de liquidación y sirven de clave para el import por Excel y los escenarios (paso 4).
+// de liquidación y sirven de clave para el import por Excel y los escenarios.
 function genLiquidaciones(clienteId, tipo, slaQ) {
   const liqs = [];
   if (tipo === "mensual" || tipo === "ambos") {
@@ -121,8 +119,9 @@ function genLiquidaciones(clienteId, tipo, slaQ) {
   return liqs;
 }
 
+// tipo null/vacío → "mensual" (default para clientes sin dato en Monday).
 function inferirTipo(tipoTexto) {
-  if (!tipoTexto) return "ninguno";
+  if (!tipoTexto) return "mensual";
   const t = tipoTexto.toLowerCase();
   if (t.includes("mixto")) return "ambos";
   const tieneM = t.includes("mensual");
@@ -130,7 +129,7 @@ function inferirTipo(tipoTexto) {
   if (tieneM && tieneQ) return "ambos";
   if (tieneQ) return "quincenal";
   if (tieneM) return "mensual";
-  return "ninguno";
+  return "mensual";
 }
 
 const formatN = (n) => Number.isInteger(n) ? String(n) : n.toFixed(1).replace(".0", "");
@@ -148,6 +147,13 @@ function SectionLabel({ children }) {
   return <div style={{ fontSize: 10, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.09em", color: C.celeste, marginBottom: 10 }}>{children}</div>;
 }
 
+const BTN_BASE = { ...font, cursor: "pointer", border: `1px solid ${C.borde}`, background: "#FFF", color: C.navy, borderRadius: 9999, padding: "7px 16px", fontSize: 12, fontWeight: 600 };
+
+const loadEscenarios = () => {
+  try { return JSON.parse(localStorage.getItem(STORAGE_KEY) || "[]"); }
+  catch { return []; }
+};
+
 export default function SimuladorReorg() {
   // pesos crudos 0-100; se normalizan al calcular
   const [pesos, setPesos] = useState({ comp: 40, cant: 35, pays: 25 });
@@ -156,11 +162,12 @@ export default function SimuladorReorg() {
   const [seleccionado, setSeleccionado] = useState(null);
   const [copiado, setCopiado] = useState(false);
   const [verValidacion, setVerValidacion] = useState(true);
+  const [verAyuda, setVerAyuda] = useState(false);
   const [analistasExcluidos, setAnalistasExcluidos] = useState(() => new Set());
   const [verAnalistas, setVerAnalistas] = useState(false);
-  const [slaQuincena, setSlaQuincena] = useState(1); // días hábiles por defecto entre instancias quincenales (24 hs = 1)
-  const [cutoffs, setCutoffs] = useState({}); // {liqId: "YYYY-MM-DD"} — manual; alimenta el heatmap
-  const [cutoffsEstado, setCutoffsEstado] = useState({}); // {liqId: "confirmado"|"default"} — "default" = fecha tentativa de la carga rápida, pendiente de confirmar
+  const [slaQuincena, setSlaQuincena] = useState(1);
+  const [cutoffs, setCutoffs] = useState({});
+  const [cutoffsEstado, setCutoffsEstado] = useState({});
   const [ajustarPorComplejidad, setAjustarPorComplejidad] = useState(false);
   const [configClientes, setConfigClientes] = useState(() => {
     return Object.fromEntries(CLIENTES.map(c => {
@@ -169,10 +176,26 @@ export default function SimuladorReorg() {
     }));
   });
 
+  // Overrides de sesión: complejidad y pays editables por cliente (no persisten a Monday).
+  const [overrides, setOverrides] = useState({});
+  const getComp = (c) => overrides[c.id]?.complejidad ?? c.complejidad;
+  const getPays = (c) => overrides[c.id]?.pays ?? c.pays;
+  const setOverride = (clienteId, campo, valor) => {
+    setOverrides(prev => ({ ...prev, [clienteId]: { ...(prev[clienteId] || {}), [campo]: valor } }));
+  };
+
+  // Drag-and-drop: chip → tarjeta de analista
+  const [dragCliente, setDragCliente] = useState(null);
+  const [dragOver, setDragOver] = useState(null);
+
+  // Escenarios guardados (localStorage)
+  const [escenarios, setEscenarios] = useState(loadEscenarios);
+  const [escenarioNombre, setEscenarioNombre] = useState("");
+  const [escenarioActual, setEscenarioActual] = useState(null);
+  const [verEscenarios, setVerEscenarios] = useState(false);
+
   const incluidos = useMemo(() => CLIENTES.filter(c => !(excluirToyota && c.distorsiona)), [excluirToyota]);
 
-  // Cut-offs con fecha default (tentativa) vigentes — alimenta la advertencia del heatmap:
-  // pico y choques calculados sobre defaults no son datos reales hasta confirmarlos.
   const nSinConfirmar = useMemo(() => {
     const vigentes = new Set();
     for (const c of incluidos) for (const l of (configClientes[c.id]?.liquidaciones || [])) vigentes.add(l.id);
@@ -188,18 +211,13 @@ export default function SimuladorReorg() {
   const sumaPesos = pesos.comp + pesos.cant + pesos.pays || 1;
   const w = { comp: pesos.comp / sumaPesos, cant: pesos.cant / sumaPesos, pays: pesos.pays / sumaPesos };
 
-  // Carga por analista para una asignación dada.
-  // Si el asignado es excluido → cliente va a "Sin asignar".
-  // Si el cliente tiene `equipo` Y sigue asignado al consultor original → se reparte entre los miembros visibles.
   const cargaPor = (asig) => {
     const m = {};
     analistasVisibles.forEach(a => { m[a.nombre] = { n: 0, comp: 0, pays: 0 }; });
     m["Sin asignar"] = { n: 0, comp: 0, pays: 0 };
-
     incluidos.forEach(c => {
       const anRaw = asig[c.id];
       const an = nombresVisibles.has(anRaw) ? anRaw : "Sin asignar";
-
       const usandoEquipo = c.equipo && an === c.consultor;
       let integrantes;
       if (usandoEquipo) {
@@ -212,8 +230,8 @@ export default function SimuladorReorg() {
       integrantes.forEach(nom => {
         if (!m[nom]) m[nom] = { n: 0, comp: 0, pays: 0 };
         m[nom].n += 1 / div;
-        m[nom].comp += (c.complejidad || 0) / div;
-        m[nom].pays += (c.pays || 0) / div;
+        m[nom].comp += getComp(c) / div;
+        m[nom].pays += getPays(c) / div;
       });
     });
     return m;
@@ -222,7 +240,6 @@ export default function SimuladorReorg() {
   const { scores, baseScores, media } = useMemo(() => {
     const base = cargaPor(BASE_ASIGNACION);
     const cur = cargaPor(asignacion);
-    // Denominadores FIJOS del escenario base → los scores son comparables antes/después
     const dComp = Math.max(...Object.values(base).map(x => x.comp), 1);
     const dN = Math.max(...Object.values(base).map(x => x.n), 1);
     const dPays = Math.max(...Object.values(base).map(x => x.pays), 1);
@@ -233,7 +250,7 @@ export default function SimuladorReorg() {
     const activos = Object.entries(scores).filter(([k, s]) => k !== "Sin asignar" && s.n > 0).map(([, s]) => s);
     const media = activos.length ? activos.reduce((s, x) => s + x.score, 0) / activos.length : 0;
     return { scores, baseScores, media };
-  }, [asignacion, w.comp, w.cant, w.pays, incluidos, analistasVisibles]);
+  }, [asignacion, w.comp, w.cant, w.pays, incluidos, analistasVisibles, overrides]);
 
   const semaforo = (score, n) => {
     if (n === 0) return { color: C.gris, label: "Sin clientes" };
@@ -256,29 +273,25 @@ export default function SimuladorReorg() {
     const c = CLIENTES.find(x => x.id === clienteId);
     setAsignacion(prev => ({ ...prev, [clienteId]: c.consultor }));
   };
-  const reiniciar = () => { setAsignacion(BASE_ASIGNACION); setSeleccionado(null); };
+  const reiniciar = () => {
+    setAsignacion(BASE_ASIGNACION);
+    setSeleccionado(null);
+    setOverrides({});
+    setEscenarioActual(null);
+  };
 
-  // Setter de cut-off por liquidación (consumido por el panel del cliente, el panel
-  // de carga rápida y el heatmap). estado: "confirmado" (dato real, default al editar
-  // a mano) o "default" (tentativo, generado por "Aplicar defaults").
+  // ---- Cut-offs ----
   const setCutoff = (liqId, isoFecha, estado = "confirmado") => {
     setCutoffs(prev => {
-      if (!isoFecha) {
-        const { [liqId]: _, ...rest } = prev;
-        return rest;
-      }
+      if (!isoFecha) { const { [liqId]: _, ...rest } = prev; return rest; }
       return { ...prev, [liqId]: isoFecha };
     });
     setCutoffsEstado(prev => {
-      if (!isoFecha) {
-        const { [liqId]: _, ...rest } = prev;
-        return rest;
-      }
+      if (!isoFecha) { const { [liqId]: _, ...rest } = prev; return rest; }
       return { ...prev, [liqId]: estado };
     });
   };
   const confirmarCutoff = (liqId) => setCutoffsEstado(prev => (prev[liqId] ? { ...prev, [liqId]: "confirmado" } : prev));
-  // Aplica varios cut-offs de una (defaults del panel o pegado desde Excel).
   const aplicarCutoffsLote = (entradas, estado) => {
     if (!entradas || Object.keys(entradas).length === 0) return;
     setCutoffs(prev => ({ ...prev, ...entradas }));
@@ -289,10 +302,6 @@ export default function SimuladorReorg() {
     });
   };
 
-  // Borra cut-offs (y su estado) de liquidaciones de un cliente que ya no existen,
-  // para que un id determinístico reusado (p. ej. :extra-1 tras eliminar y volver a
-  // agregar) no "resucite" una fecha vieja como confirmada. El separador ":" evita
-  // que un clienteId que sea prefijo de otro matchee de más.
   const podarCutoffsHuerfanos = (clienteId, nuevasLiqs) => {
     const validos = new Set(nuevasLiqs.map(l => l.id));
     const esHuerfano = (id) => id.startsWith(`${clienteId}:`) && !validos.has(id);
@@ -306,14 +315,14 @@ export default function SimuladorReorg() {
     setCutoffsEstado(prev => podar(prev));
   };
 
-  // ---- Acciones sobre configClientes (tipo de liquidación + instancias) ----
+  // ---- Liquidaciones ----
   const setTipoLiqCliente = (clienteId, nuevoTipo) => {
     const nuevas = genLiquidaciones(clienteId, nuevoTipo, slaQuincena);
     podarCutoffsHuerfanos(clienteId, nuevas);
     setConfigClientes(prev => ({ ...prev, [clienteId]: { tipoLiq: nuevoTipo, liquidaciones: nuevas } }));
   };
   const regenerarDefault = (clienteId) => {
-    const tipoLiq = configClientes[clienteId]?.tipoLiq || "ninguno";
+    const tipoLiq = configClientes[clienteId]?.tipoLiq || "mensual";
     const nuevas = genLiquidaciones(clienteId, tipoLiq, slaQuincena);
     podarCutoffsHuerfanos(clienteId, nuevas);
     setConfigClientes(prev => ({ ...prev, [clienteId]: { tipoLiq, liquidaciones: nuevas } }));
@@ -323,8 +332,7 @@ export default function SimuladorReorg() {
       const cfg = prev[clienteId];
       if (!cfg) return prev;
       const liquidaciones = cfg.liquidaciones.map(l => l.id !== liqId ? l : ({
-        ...l,
-        instancias: l.instancias.map(i => i.id !== instId ? i : ({ ...i, [campo]: valor })),
+        ...l, instancias: l.instancias.map(i => i.id !== instId ? i : ({ ...i, [campo]: valor })),
       }));
       return { ...prev, [clienteId]: { ...cfg, liquidaciones } };
     });
@@ -334,8 +342,7 @@ export default function SimuladorReorg() {
       const cfg = prev[clienteId];
       if (!cfg) return prev;
       const liquidaciones = cfg.liquidaciones.map(l => l.id !== liqId ? l : ({
-        ...l,
-        instancias: l.instancias.filter(i => i.id !== instId),
+        ...l, instancias: l.instancias.filter(i => i.id !== instId),
       }));
       return { ...prev, [clienteId]: { ...cfg, liquidaciones } };
     });
@@ -345,8 +352,7 @@ export default function SimuladorReorg() {
       const cfg = prev[clienteId];
       if (!cfg) return prev;
       const liquidaciones = cfg.liquidaciones.map(l => l.id !== liqId ? l : ({
-        ...l,
-        instancias: [...l.instancias, { id: rid(), nombre: "Nueva etapa", slaHabiles: 1 }],
+        ...l, instancias: [...l.instancias, { id: rid(), nombre: "Nueva etapa", slaHabiles: 1 }],
       }));
       return { ...prev, [clienteId]: { ...cfg, liquidaciones } };
     });
@@ -360,7 +366,7 @@ export default function SimuladorReorg() {
     });
   };
   const eliminarLiquidacion = (clienteId, liqId) => {
-    setCutoff(liqId, ""); // limpiar su cut-off: si luego se reusa el id (:extra-N) no debe heredar la fecha
+    setCutoff(liqId, "");
     setConfigClientes(prev => {
       const cfg = prev[clienteId];
       if (!cfg) return prev;
@@ -377,17 +383,87 @@ export default function SimuladorReorg() {
     });
   };
 
-  // ---- Filtro de analistas ----
+  // ---- Analistas ----
   const toggleExcluido = (nombre) => {
     setAnalistasExcluidos(prev => {
       const next = new Set(prev);
-      if (next.has(nombre)) next.delete(nombre);
-      else next.add(nombre);
+      if (next.has(nombre)) next.delete(nombre); else next.add(nombre);
       return next;
     });
   };
   const incluirTodos = () => setAnalistasExcluidos(new Set());
 
+  // ---- Escenarios ----
+  const guardarEscenario = (nombre) => {
+    const nuevo = {
+      nombre,
+      creado: new Date().toLocaleString("es-AR"),
+      asignacion: { ...asignacion },
+      configClientes,
+      cutoffs: { ...cutoffs },
+      cutoffsEstado: { ...cutoffsEstado },
+      pesos: { ...pesos },
+      excluirToyota,
+      analistasExcluidos: [...analistasExcluidos],
+      ajustarPorComplejidad,
+      overrides: { ...overrides },
+      slaQuincena,
+    };
+    const arr = [nuevo, ...escenarios.filter(e => e.nombre !== nombre)];
+    setEscenarios(arr);
+    setEscenarioActual(nombre);
+    setEscenarioNombre("");
+    try { localStorage.setItem(STORAGE_KEY, JSON.stringify(arr)); } catch {}
+  };
+
+  const cargarEscenario = (nombre) => {
+    const esc = escenarios.find(e => e.nombre === nombre);
+    if (!esc) return;
+    setAsignacion(esc.asignacion);
+    setConfigClientes(esc.configClientes);
+    setCutoffs(esc.cutoffs || {});
+    setCutoffsEstado(esc.cutoffsEstado || {});
+    setPesos(esc.pesos);
+    setExcluirToyota(esc.excluirToyota);
+    setAnalistasExcluidos(new Set(esc.analistasExcluidos || []));
+    setAjustarPorComplejidad(esc.ajustarPorComplejidad || false);
+    setOverrides(esc.overrides || {});
+    setSlaQuincena(esc.slaQuincena ?? 1);
+    setEscenarioActual(nombre);
+    setSeleccionado(null);
+  };
+
+  const eliminarEscenario = (nombre) => {
+    const arr = escenarios.filter(e => e.nombre !== nombre);
+    setEscenarios(arr);
+    if (escenarioActual === nombre) setEscenarioActual(null);
+    try { localStorage.setItem(STORAGE_KEY, JSON.stringify(arr)); } catch {}
+  };
+
+  const exportarEscenarios = () => {
+    const blob = new Blob([JSON.stringify(escenarios, null, 2)], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a"); a.href = url; a.download = "escenarios-reorg.json"; a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  const importarEscenarios = (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = (ev) => {
+      try {
+        const arr = JSON.parse(ev.target.result);
+        if (!Array.isArray(arr)) throw new Error();
+        setEscenarios(arr);
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(arr));
+      } catch { alert("El archivo no es válido."); }
+    };
+    reader.readAsText(file);
+    e.target.value = "";
+  };
+
+  // ---- Plan de cambios ----
   const planTexto = useMemo(() => {
     const fecha = new Date().toLocaleDateString("es-AR");
     const lineas = cambios.map((m, i) => `${i + 1}. ${m.cliente}: ${m.de} (Jef. ${m.jefDe}) → ${m.a} (Jef. ${m.jefA})${m.cambiaJef ? "  [CAMBIA JEFATURA]" : ""}`);
@@ -397,20 +473,17 @@ export default function SimuladorReorg() {
 
   const copiar = async () => {
     try { await navigator.clipboard.writeText(planTexto); setCopiado(true); setTimeout(() => setCopiado(false), 2000); }
-    catch { /* fallback: el textarea de abajo permite seleccionar todo */ }
+    catch { /* el textarea de abajo permite seleccionar todo */ }
   };
 
   const clienteSel = seleccionado ? CLIENTES.find(c => c.id === seleccionado) : null;
   const cfgSel = clienteSel ? configClientes[clienteSel.id] : null;
 
-  // El input numérico y el slider editan el mismo valor crudo 0-100;
-  // al lado se muestra el % ya normalizado (lo que realmente pesa en el score).
   const slider = (key, label) => (
     <label key={key} style={{ display: "flex", flexDirection: "column", gap: 4, minWidth: 150, flex: 1 }}>
       <span style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, fontWeight: 600, color: C.navy }}>
         {label}
-        <input
-          type="number" min="0" max="100" value={pesos[key]}
+        <input type="number" min="0" max="100" value={pesos[key]}
           onChange={e => setPesos(p => ({ ...p, [key]: Math.max(0, Math.min(100, Math.round(+e.target.value || 0))) }))}
           style={{ ...font, width: 52, padding: "3px 6px", border: `1px solid ${C.borde}`, borderRadius: 6, fontSize: 12, fontWeight: 700, color: C.navy }}
         />
@@ -423,6 +496,35 @@ export default function SimuladorReorg() {
   const sinAsignar = scores["Sin asignar"] || { n: 0, comp: 0, pays: 0, score: 0 };
   const clientesSinAsignar = incluidos.filter(c => !nombresVisibles.has(asignacion[c.id]));
 
+  // Chip de cliente: draggable, seleccionable por click
+  const chipCliente = (c, { movido, sel, tieneEquipo, esEquipo, lider }) => {
+    const estilo = {
+      ...font, cursor: "pointer", fontSize: 11.5, fontWeight: 600, padding: "4px 10px", borderRadius: 9999,
+      background: sel ? C.celeste : esEquipo ? "rgba(140,131,123,0.10)" : movido ? "rgba(0,172,212,0.12)" : C.off,
+      color: sel ? "#FFF" : esEquipo ? C.txt2 : C.navy,
+      border: sel ? `1px solid ${C.celesteDark}` : esEquipo ? `1px dashed ${C.borde}` : movido ? "1px solid rgba(0,172,212,0.45)" : `1px solid ${C.borde}`,
+      fontStyle: esEquipo ? "italic" : "normal",
+      opacity: dragCliente && dragCliente !== c.id ? 0.7 : 1,
+    };
+    const titulo = esEquipo
+      ? `Apoyo del equipo · Líder: ${lider} · Complejidad ${getComp(c)} · ${getPays(c)} pays`
+      : `Complejidad ${getComp(c)} · ${getPays(c)} pays · ${c.tipo || "tipo s/d"}${movido ? ` · venía de ${c.consultor}` : ""}${tieneEquipo ? ` · equipo: ${[c.consultor, ...c.equipo].join(", ")}` : ""}`;
+    return (
+      <button
+        key={esEquipo ? `eq-${c.id}` : c.id}
+        draggable={!esEquipo}
+        onDragStart={!esEquipo ? (e) => { e.dataTransfer.effectAllowed = "move"; setDragCliente(c.id); } : undefined}
+        onDragEnd={!esEquipo ? () => { setDragCliente(null); setDragOver(null); } : undefined}
+        onClick={() => setSeleccionado(sel ? null : c.id)}
+        title={titulo}
+        style={estilo}
+      >
+        {c.nombre} <span style={{ opacity: 0.65 }}>·C{getComp(c)}</span>
+        {tieneEquipo && " 👥"}{movido && " ↩"}{esEquipo && ` ·equipo de ${lider}`}
+      </button>
+    );
+  };
+
   return (
     <div style={{ ...font, background: C.off, minHeight: "100vh", color: C.navy }}>
       {/* Header */}
@@ -430,12 +532,31 @@ export default function SimuladorReorg() {
         <div style={{ width: 44, height: 44, borderRadius: "50%", background: C.celeste, display: "inline-flex", alignItems: "center", justifyContent: "center", color: "#FFF", fontWeight: 700, fontSize: 16, letterSpacing: "-0.5px", fontStyle: "italic" }}>H&A</div>
         <div style={{ flex: 1, minWidth: 220 }}>
           <h1 style={{ margin: 0, fontSize: 19, fontWeight: 700, color: "#FFF" }}>Simulador de Reorganización — Payroll</h1>
-          <div style={{ fontSize: 12, color: C.txt3 }}>Sandbox de reasignaciones · nunca escribe en Monday · v2 con calendario de carga (cut-offs manuales)</div>
+          <div style={{ fontSize: 12, color: C.txt3 }}>Sandbox de reasignaciones · nunca escribe en Monday · click o arrastrá chips para mover · escenarios persistentes</div>
         </div>
         <Badge color={C.celeste}>Snapshot Matrix · {SNAPSHOT_DATE}</Badge>
+        {escenarioActual && <Badge color={C.ok}>Escenario: {escenarioActual}</Badge>}
       </header>
 
       <main style={{ maxWidth: 1240, margin: "0 auto", padding: "20px 20px 60px" }}>
+
+        {/* Cómo usar */}
+        <section style={{ marginBottom: 14, background: "rgba(0,172,212,0.06)", border: `1px solid rgba(0,172,212,0.22)`, borderRadius: 14, padding: "11px 18px" }}>
+          <button onClick={() => setVerAyuda(v => !v)} style={{ ...font, background: "none", border: "none", cursor: "pointer", padding: 0, fontSize: 12, fontWeight: 700, color: C.celesteDark, textTransform: "uppercase", letterSpacing: "0.06em" }}>
+            Cómo usar {verAyuda ? "▾" : "▸"}
+          </button>
+          {verAyuda && (
+            <ol style={{ margin: "10px 0 2px", paddingLeft: 20, fontSize: 12.5, color: C.txt2, lineHeight: 1.7 }}>
+              <li><strong>Mover clientes:</strong> hacé click en un chip para seleccionarlo y elegí el analista destino en la barra flotante. También podés arrastrarlo directo a otra tarjeta de analista.</li>
+              <li><strong>Score de carga:</strong> cada analista tiene un puntaje basado en complejidad, cantidad de clientes y pays (pesos ajustables en la sección de arriba). Verde = equilibrado · Celeste = subcargado · Rojo = sobrecargado.</li>
+              <li><strong>Editar complejidad / pays:</strong> cuando seleccionás un cliente, la barra flotante muestra campos C: y Pays: editables. Son overrides de sesión: afectan el score y el heatmap, pero no se graban en Monday.</li>
+              <li><strong>Cut-offs y heatmap:</strong> en el panel "Carga de cut-offs" definís las fechas de inicio de cada ciclo; el heatmap muestra la carga diaria resultante y detecta choques duros (borde rojo) y advertencias (borde punteado).</li>
+              <li><strong>Escenarios:</strong> dale un nombre al estado actual y guardalo para comparar distintas reorganizaciones. Se persisten en el navegador (localStorage). Exportá/importá como JSON para compartir.</li>
+              <li><strong>Plan de cambios:</strong> al final de la página se genera la lista de movimientos para aplicar a mano en Monday (board 6552205482, columnas consultor2__1 / color_mkpexfx8).</li>
+            </ol>
+          )}
+        </section>
+
         {/* Controles */}
         <section style={{ background: "#FFF", border: `1px solid ${C.borde}`, borderRadius: 14, padding: "16px 18px", boxShadow: "0 1px 4px rgba(30,58,95,0.06)", display: "flex", gap: 20, alignItems: "flex-end", flexWrap: "wrap" }}>
           <div style={{ flex: 3, minWidth: 320 }}>
@@ -453,10 +574,60 @@ export default function SimuladorReorg() {
               <input type="checkbox" checked={excluirToyota} onChange={e => setExcluirToyota(e.target.checked)} style={{ accentColor: C.celeste }} />
               Excluir Toyota del score
             </label>
-            <button onClick={reiniciar} style={{ ...font, display: "inline-flex", alignItems: "center", gap: 6, borderRadius: 9999, fontWeight: 600, cursor: "pointer", border: `1px solid ${C.borde}`, background: "#FFF", color: C.navy, padding: "9px 20px", fontSize: 13 }}>
+            <button onClick={reiniciar} style={{ ...font, ...BTN_BASE }}>
               Reiniciar escenario
             </button>
           </div>
+        </section>
+
+        {/* Escenarios guardados */}
+        <section style={{ marginTop: 14, background: "#FFF", border: `1px solid ${C.borde}`, borderRadius: 14, padding: "12px 18px", boxShadow: "0 1px 4px rgba(30,58,95,0.06)" }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+            <button onClick={() => setVerEscenarios(v => !v)} style={{ ...font, background: "none", border: "none", cursor: "pointer", padding: 0, fontSize: 12, fontWeight: 700, color: C.celeste, textTransform: "uppercase", letterSpacing: "0.06em" }}>
+              Escenarios ({escenarios.length}) {verEscenarios ? "▾" : "▸"}
+            </button>
+            {/* Guardar rápido */}
+            <div style={{ display: "flex", gap: 6, alignItems: "center", flex: 1, minWidth: 240 }}>
+              <input
+                value={escenarioNombre}
+                onChange={e => setEscenarioNombre(e.target.value)}
+                onKeyDown={e => e.key === "Enter" && escenarioNombre.trim() && guardarEscenario(escenarioNombre.trim())}
+                placeholder="Nombre del escenario…"
+                style={{ ...font, flex: 1, padding: "6px 10px", border: `1px solid ${C.borde}`, borderRadius: 8, fontSize: 12, color: C.navy }}
+              />
+              <button
+                onClick={() => escenarioNombre.trim() && guardarEscenario(escenarioNombre.trim())}
+                disabled={!escenarioNombre.trim()}
+                style={{ ...font, background: C.navy, color: "#FFF", border: "none", borderRadius: 9999, padding: "7px 16px", fontSize: 12, fontWeight: 700, cursor: escenarioNombre.trim() ? "pointer" : "default", opacity: escenarioNombre.trim() ? 1 : 0.4 }}
+              >
+                Guardar
+              </button>
+            </div>
+            <button onClick={exportarEscenarios} style={{ ...font, ...BTN_BASE, fontSize: 11 }}>Exportar JSON</button>
+            <label style={{ ...font, ...BTN_BASE, fontSize: 11, cursor: "pointer" }}>
+              Importar JSON
+              <input type="file" accept=".json" onChange={importarEscenarios} style={{ display: "none" }} />
+            </label>
+          </div>
+          {verEscenarios && (
+            <div style={{ marginTop: 12 }}>
+              {escenarios.length === 0 && (
+                <div style={{ fontSize: 12.5, color: C.txt3, padding: "6px 0" }}>No hay escenarios guardados todavía.</div>
+              )}
+              {escenarios.map(e => (
+                <div key={e.nombre} style={{ display: "flex", alignItems: "center", gap: 8, padding: "7px 0", borderBottom: `1px solid ${C.borde}` }}>
+                  <span style={{ flex: 1, fontSize: 13, fontWeight: 700, color: C.navy }}>{e.nombre}</span>
+                  <span style={{ fontSize: 11, color: C.txt3, minWidth: 120 }}>{e.creado}</span>
+                  <button onClick={() => cargarEscenario(e.nombre)} style={{ ...font, background: e.nombre === escenarioActual ? C.celeste : C.off, color: e.nombre === escenarioActual ? "#FFF" : C.navy, border: `1px solid ${e.nombre === escenarioActual ? C.celesteDark : C.borde}`, borderRadius: 9999, padding: "5px 14px", fontSize: 11, fontWeight: 600, cursor: "pointer" }}>
+                    {e.nombre === escenarioActual ? "Activo" : "Cargar"}
+                  </button>
+                  <button onClick={() => eliminarEscenario(e.nombre)} style={{ ...font, background: "none", border: `1px solid ${C.borde}`, borderRadius: 9999, padding: "5px 12px", fontSize: 11, fontWeight: 600, color: C.err, cursor: "pointer" }}>
+                    Eliminar
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
         </section>
 
         {/* Filtro de analistas */}
@@ -494,7 +665,7 @@ export default function SimuladorReorg() {
         {/* Validación de datos */}
         <section style={{ marginTop: 14, background: "rgba(245,158,11,0.08)", border: "1px solid rgba(245,158,11,0.32)", borderRadius: 14, padding: "12px 18px" }}>
           <button onClick={() => setVerValidacion(v => !v)} style={{ ...font, background: "none", border: "none", cursor: "pointer", padding: 0, fontSize: 12, fontWeight: 700, color: "#B07408", textTransform: "uppercase", letterSpacing: "0.06em" }}>
-            Validación de datos ({VALIDACIONES.length}) {verValidacion ? "▾" : "▸"}
+            Notas de datos ({VALIDACIONES.length}) {verValidacion ? "▾" : "▸"}
           </button>
           {verValidacion && (
             <ul style={{ margin: "8px 0 0", paddingLeft: 18, fontSize: 12.5, color: "#7A5104", lineHeight: 1.55 }}>
@@ -503,99 +674,127 @@ export default function SimuladorReorg() {
           )}
         </section>
 
-        {/* Barra de movimiento */}
+        {/* Panel flotante: Mover + Liquidaciones (sticky) */}
         {clienteSel && (
-          <section style={{ position: "sticky", top: 8, zIndex: 10, marginTop: 14, background: C.navy, color: "#FFF", borderRadius: 14, padding: "12px 18px", display: "flex", gap: 12, alignItems: "center", flexWrap: "wrap", boxShadow: "0 10px 30px rgba(15,33,51,0.35)" }}>
-            <span style={{ fontSize: 13 }}>Mover <strong>{clienteSel.nombre}</strong> (hoy: {asignacion[clienteSel.id]}) a:</span>
-            <select defaultValue="" onChange={e => e.target.value && mover(clienteSel.id, e.target.value)} style={{ ...font, padding: "8px 12px", borderRadius: 8, border: "none", fontSize: 13, color: C.navy }}>
-              <option value="" disabled>Elegí analista…</option>
-              {ORDEN_JEFATURAS.map(j => {
-                const grupo = analistasVisibles.filter(a => a.jefatura === j && a.nombre !== asignacion[clienteSel.id]);
-                return grupo.length ? (
-                  <optgroup key={j} label={`Jefatura ${j}`}>
-                    {grupo.map(a => <option key={a.nombre} value={a.nombre}>{a.nombre}</option>)}
-                  </optgroup>
-                ) : null;
-              })}
-            </select>
-            <button onClick={() => setSeleccionado(null)} style={{ ...font, marginLeft: "auto", background: "rgba(255,255,255,0.12)", color: "#FFF", border: "none", borderRadius: 9999, padding: "7px 16px", fontSize: 12, fontWeight: 600, cursor: "pointer" }}>Cancelar</button>
-          </section>
-        )}
-
-        {/* Panel de configuración del cliente seleccionado */}
-        {clienteSel && cfgSel && (
-          <section style={{ marginTop: 14, background: "#FFF", border: `1px solid ${C.borde}`, borderRadius: 14, padding: "16px 18px", boxShadow: "0 1px 4px rgba(30,58,95,0.06)" }}>
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 10 }}>
-              <SectionLabel>Liquidaciones de {clienteSel.nombre}</SectionLabel>
-              <button onClick={() => regenerarDefault(clienteSel.id)} style={{ ...font, background: "none", border: `1px solid ${C.borde}`, borderRadius: 9999, padding: "5px 14px", fontSize: 11, fontWeight: 600, color: C.txt2, cursor: "pointer" }}>
-                ⟳ Restaurar default
+          <section style={{ position: "sticky", top: 8, zIndex: 20, marginTop: 14, borderRadius: 14, overflow: "hidden", boxShadow: "0 10px 30px rgba(15,33,51,0.38)", border: `1px solid rgba(15,33,51,0.18)` }}>
+            {/* Barra superior: mover + overrides */}
+            <div style={{ background: C.navy, color: "#FFF", padding: "11px 18px", display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
+              <span style={{ fontSize: 13 }}>Mover <strong>{clienteSel.nombre}</strong> (hoy: {asignacion[clienteSel.id]}) a:</span>
+              <select key={clienteSel.id} defaultValue="" onChange={e => e.target.value && mover(clienteSel.id, e.target.value)}
+                style={{ ...font, padding: "7px 12px", borderRadius: 8, border: "none", fontSize: 13, color: C.navy }}>
+                <option value="" disabled>Elegí analista…</option>
+                {ORDEN_JEFATURAS.map(j => {
+                  const grupo = analistasVisibles.filter(a => a.jefatura === j && a.nombre !== asignacion[clienteSel.id]);
+                  return grupo.length ? (
+                    <optgroup key={j} label={`Jefatura ${j}`}>
+                      {grupo.map(a => <option key={a.nombre} value={a.nombre}>{a.nombre}</option>)}
+                    </optgroup>
+                  ) : null;
+                })}
+              </select>
+              {/* Override complejidad */}
+              <label style={{ display: "inline-flex", alignItems: "center", gap: 5, fontSize: 12, color: "rgba(255,255,255,0.85)" }}>
+                C:
+                <input type="number" min="1" max="5" value={getComp(clienteSel)}
+                  onChange={e => setOverride(clienteSel.id, "complejidad", Math.max(1, Math.min(5, +e.target.value || 1)))}
+                  style={{ ...font, width: 46, padding: "4px 6px", borderRadius: 6, border: "none", fontSize: 12, fontWeight: 700, color: C.navy, textAlign: "center" }}
+                />
+                {overrides[clienteSel.id]?.complejidad !== undefined && (
+                  <span style={{ fontSize: 10, color: "rgba(255,255,255,0.45)" }}>(base {clienteSel.complejidad})</span>
+                )}
+              </label>
+              {/* Override pays */}
+              <label style={{ display: "inline-flex", alignItems: "center", gap: 5, fontSize: 12, color: "rgba(255,255,255,0.85)" }}>
+                Pays:
+                <input type="number" min="0" value={getPays(clienteSel)}
+                  onChange={e => setOverride(clienteSel.id, "pays", Math.max(0, +e.target.value || 0))}
+                  style={{ ...font, width: 72, padding: "4px 6px", borderRadius: 6, border: "none", fontSize: 12, fontWeight: 700, color: C.navy, textAlign: "center" }}
+                />
+                {overrides[clienteSel.id]?.pays !== undefined && (
+                  <span style={{ fontSize: 10, color: "rgba(255,255,255,0.45)" }}>(base {clienteSel.pays})</span>
+                )}
+              </label>
+              {(overrides[clienteSel.id]?.complejidad !== undefined || overrides[clienteSel.id]?.pays !== undefined) && (
+                <button onClick={() => setOverrides(prev => { const { [clienteSel.id]: _, ...rest } = prev; return rest; })}
+                  style={{ ...font, background: "rgba(255,255,255,0.12)", color: "rgba(255,255,255,0.7)", border: "none", borderRadius: 9999, padding: "4px 10px", fontSize: 11, cursor: "pointer" }}>
+                  Restablecer
+                </button>
+              )}
+              <button onClick={() => setSeleccionado(null)}
+                style={{ ...font, marginLeft: "auto", background: "rgba(255,255,255,0.12)", color: "#FFF", border: "none", borderRadius: 9999, padding: "7px 16px", fontSize: 12, fontWeight: 600, cursor: "pointer" }}>
+                Cancelar
               </button>
             </div>
 
-            {/* Selector de tipo */}
-            <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 12 }}>
-              {[
-                { v: "ninguno", l: "Sin liquidación regular" },
-                { v: "mensual", l: "Mensual" },
-                { v: "quincenal", l: "Quincenal" },
-                { v: "ambos", l: "Ambos (Mensual + Quincenas)" },
-              ].map(o => {
-                const sel = cfgSel.tipoLiq === o.v;
-                return (
-                  <button key={o.v} onClick={() => setTipoLiqCliente(clienteSel.id, o.v)} style={{ ...font, cursor: "pointer", fontSize: 12, fontWeight: 700, padding: "6px 14px", borderRadius: 9999, background: sel ? C.celeste : "#FFF", color: sel ? "#FFF" : C.navy, border: `1px solid ${sel ? C.celesteDark : C.borde}` }}>
-                    {o.l}
+            {/* Cuerpo: Liquidaciones (scrollable) */}
+            {cfgSel && (
+              <div style={{ background: "#FFF", color: C.navy, maxHeight: "44vh", overflowY: "auto", padding: "14px 18px" }}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 10, marginBottom: 10 }}>
+                  <SectionLabel>Liquidaciones de {clienteSel.nombre}</SectionLabel>
+                  <button onClick={() => regenerarDefault(clienteSel.id)} style={{ ...font, background: "none", border: `1px solid ${C.borde}`, borderRadius: 9999, padding: "5px 14px", fontSize: 11, fontWeight: 600, color: C.txt2, cursor: "pointer" }}>
+                    ⟳ Restaurar default
                   </button>
-                );
-              })}
-            </div>
-
-            {/* Liquidaciones */}
-            {cfgSel.liquidaciones.length === 0 && (
-              <div style={{ fontSize: 12.5, color: C.txt3, padding: "10px 0" }}>
-                Sin liquidaciones definidas. Elegí un tipo o agregá una manualmente.
+                </div>
+                <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 12 }}>
+                  {[
+                    { v: "ninguno", l: "Sin liquidación regular" },
+                    { v: "mensual", l: "Mensual" },
+                    { v: "quincenal", l: "Quincenal" },
+                    { v: "ambos", l: "Ambos (Mensual + Quincenas)" },
+                  ].map(o => {
+                    const activo = cfgSel.tipoLiq === o.v;
+                    return (
+                      <button key={o.v} onClick={() => setTipoLiqCliente(clienteSel.id, o.v)} style={{ ...font, cursor: "pointer", fontSize: 12, fontWeight: 700, padding: "6px 14px", borderRadius: 9999, background: activo ? C.celeste : "#FFF", color: activo ? "#FFF" : C.navy, border: `1px solid ${activo ? C.celesteDark : C.borde}` }}>
+                        {o.l}
+                      </button>
+                    );
+                  })}
+                </div>
+                {cfgSel.liquidaciones.length === 0 && (
+                  <div style={{ fontSize: 12.5, color: C.txt3, padding: "10px 0" }}>Sin liquidaciones definidas. Elegí un tipo o agregá una manualmente.</div>
+                )}
+                {cfgSel.liquidaciones.map(liq => (
+                  <div key={liq.id} style={{ marginBottom: 12, padding: "10px 12px", background: C.off, borderRadius: 10, border: `1px solid ${C.borde}` }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8, flexWrap: "wrap" }}>
+                      <input value={liq.etiqueta} onChange={e => renombrarLiquidacion(clienteSel.id, liq.id, e.target.value)} style={{ ...font, fontSize: 13, fontWeight: 700, color: C.navy, border: "none", background: "transparent", borderBottom: `1px dashed ${C.borde}`, padding: "2px 4px", flex: 1, minWidth: 140 }} />
+                      <label title="Fecha del corte de novedades" style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: 11, fontWeight: 700, color: C.txt2 }}>
+                        <span style={{ textTransform: "uppercase", letterSpacing: "0.06em", fontSize: 10, color: C.celeste }}>Cut Off</span>
+                        <input type="date" value={cutoffs[liq.id] || ""} onChange={e => setCutoff(liq.id, e.target.value)} style={{ ...font, padding: "3px 6px", border: `1px solid ${C.borde}`, borderRadius: 8, fontSize: 12, color: C.navy }} />
+                        {cutoffs[liq.id] && (
+                          <button onClick={() => setCutoff(liq.id, "")} style={{ ...font, background: "none", border: "none", color: C.txt3, cursor: "pointer", fontSize: 13, padding: "0 4px", lineHeight: 1 }}>×</button>
+                        )}
+                      </label>
+                      <button onClick={() => eliminarLiquidacion(clienteSel.id, liq.id)} style={{ ...font, background: "none", border: `1px solid ${C.borde}`, borderRadius: 9999, padding: "3px 10px", fontSize: 11, fontWeight: 600, color: C.err, cursor: "pointer" }}>Eliminar</button>
+                    </div>
+                    <div style={{ display: "flex", flexWrap: "wrap", gap: 6, alignItems: "center" }}>
+                      {liq.instancias.map((inst, idx) => (
+                        <div key={inst.id} style={{ display: "inline-flex", alignItems: "center", gap: 4, background: "#FFF", border: `1px solid ${C.borde}`, borderRadius: 9999, padding: "3px 4px 3px 10px" }}>
+                          <input value={inst.nombre} onChange={e => editarInstancia(clienteSel.id, liq.id, inst.id, "nombre", e.target.value)} style={{ ...font, fontSize: 11.5, fontWeight: 600, color: C.navy, border: "none", outline: "none", background: "transparent", width: Math.max(60, (inst.nombre?.length || 6) * 7) }} />
+                          <span style={{ fontSize: 10, color: C.txt3, fontWeight: 600 }}>+</span>
+                          <input type="number" min="0" step="0.5" value={inst.slaHabiles}
+                            onChange={e => editarInstancia(clienteSel.id, liq.id, inst.id, "slaHabiles", Math.max(0, +e.target.value || 0))}
+                            title={idx === 0 ? "Cut Off no usa SLA" : "Días hábiles desde la etapa anterior"}
+                            style={{ ...font, width: 42, fontSize: 11.5, fontWeight: 700, color: C.celeste, textAlign: "right", border: "none", background: "transparent", outline: "none" }} />
+                          <span style={{ fontSize: 10, color: C.txt3, fontWeight: 600 }}>d</span>
+                          <button onClick={() => eliminarInstancia(clienteSel.id, liq.id, inst.id)} style={{ background: "none", border: "none", color: C.txt3, cursor: "pointer", fontSize: 13, padding: "0 6px", lineHeight: 1 }}>×</button>
+                        </div>
+                      ))}
+                      <button onClick={() => agregarInstancia(clienteSel.id, liq.id)} style={{ ...font, background: "transparent", border: `1px dashed ${C.celeste}`, color: C.celesteDark, borderRadius: 9999, padding: "3px 12px", fontSize: 11, fontWeight: 700, cursor: "pointer" }}>+ Etapa</button>
+                    </div>
+                  </div>
+                ))}
+                <button onClick={() => agregarLiquidacion(clienteSel.id)} style={{ ...font, background: C.navy, color: "#FFF", border: "none", borderRadius: 9999, padding: "7px 16px", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>
+                  + Liquidación
+                </button>
+                <div style={{ marginTop: 10, fontSize: 11, color: C.txt3 }}>
+                  SLA quincenas: <strong>{slaQuincena}</strong> día(s) hábil(es) entre etapas (editable en Controles).
+                </div>
               </div>
             )}
-            {cfgSel.liquidaciones.map(liq => (
-              <div key={liq.id} style={{ marginBottom: 12, padding: "10px 12px", background: C.off, borderRadius: 10, border: `1px solid ${C.borde}` }}>
-                <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8, flexWrap: "wrap" }}>
-                  <input value={liq.etiqueta} onChange={e => renombrarLiquidacion(clienteSel.id, liq.id, e.target.value)} style={{ ...font, fontSize: 13, fontWeight: 700, color: C.navy, border: "none", background: "transparent", borderBottom: `1px dashed ${C.borde}`, padding: "2px 4px", flex: 1, minWidth: 140 }} />
-                  <label title="Fecha del corte de novedades — ancla del ciclo en el calendario" style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: 11, fontWeight: 700, color: C.txt2 }}>
-                    <span style={{ textTransform: "uppercase", letterSpacing: "0.06em", fontSize: 10, color: C.celeste }}>Cut Off</span>
-                    <input type="date" value={cutoffs[liq.id] || ""} onChange={e => setCutoff(liq.id, e.target.value)} style={{ ...font, padding: "3px 6px", border: `1px solid ${C.borde}`, borderRadius: 8, fontSize: 12, color: C.navy }} />
-                    {cutoffs[liq.id] && (
-                      <button onClick={() => setCutoff(liq.id, "")} title="Quitar cut-off" style={{ ...font, background: "none", border: "none", color: C.txt3, cursor: "pointer", fontSize: 13, padding: "0 4px", lineHeight: 1 }}>×</button>
-                    )}
-                  </label>
-                  <button onClick={() => eliminarLiquidacion(clienteSel.id, liq.id)} title="Eliminar liquidación" style={{ ...font, background: "none", border: `1px solid ${C.borde}`, borderRadius: 9999, padding: "3px 10px", fontSize: 11, fontWeight: 600, color: C.err, cursor: "pointer" }}>
-                    Eliminar
-                  </button>
-                </div>
-                <div style={{ display: "flex", flexWrap: "wrap", gap: 6, alignItems: "center" }}>
-                  {liq.instancias.map((inst, idx) => (
-                    <div key={inst.id} style={{ display: "inline-flex", alignItems: "center", gap: 4, background: "#FFF", border: `1px solid ${C.borde}`, borderRadius: 9999, padding: "3px 4px 3px 10px" }}>
-                      <input value={inst.nombre} onChange={e => editarInstancia(clienteSel.id, liq.id, inst.id, "nombre", e.target.value)} style={{ ...font, fontSize: 11.5, fontWeight: 600, color: C.navy, border: "none", outline: "none", background: "transparent", width: Math.max(60, (inst.nombre?.length || 6) * 7) }} />
-                      <span style={{ fontSize: 10, color: C.txt3, fontWeight: 600 }}>+</span>
-                      <input type="number" min="0" step="0.5" value={inst.slaHabiles} onChange={e => editarInstancia(clienteSel.id, liq.id, inst.id, "slaHabiles", Math.max(0, +e.target.value || 0))}
-                        title={idx === 0 ? "Cut Off no usa SLA (es el punto de partida)" : "Días hábiles desde la etapa anterior"}
-                        style={{ ...font, width: 42, fontSize: 11.5, fontWeight: 700, color: C.celeste, textAlign: "right", border: "none", background: "transparent", outline: "none" }} />
-                      <span style={{ fontSize: 10, color: C.txt3, fontWeight: 600 }}>d</span>
-                      <button onClick={() => eliminarInstancia(clienteSel.id, liq.id, inst.id)} title="Eliminar etapa" style={{ background: "none", border: "none", color: C.txt3, cursor: "pointer", fontSize: 13, padding: "0 6px", lineHeight: 1 }}>×</button>
-                    </div>
-                  ))}
-                  <button onClick={() => agregarInstancia(clienteSel.id, liq.id)} style={{ ...font, background: "transparent", border: `1px dashed ${C.celeste}`, color: C.celesteDark, borderRadius: 9999, padding: "3px 12px", fontSize: 11, fontWeight: 700, cursor: "pointer" }}>+ Etapa</button>
-                </div>
-              </div>
-            ))}
-            <button onClick={() => agregarLiquidacion(clienteSel.id)} style={{ ...font, background: C.navy, color: "#FFF", border: "none", borderRadius: 9999, padding: "7px 16px", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>
-              + Liquidación
-            </button>
-            <div style={{ marginTop: 10, fontSize: 11, color: C.txt3 }}>
-              Las nuevas liquidaciones quincenales usan SLA <strong>{slaQuincena}</strong> día(s) hábil(es) entre etapas. Editá el SLA global arriba o cada etapa acá.
-            </div>
           </section>
         )}
 
-        {/* Tarjeta "Sin asignar" si corresponde */}
+        {/* Tarjeta "Sin asignar" */}
         {clientesSinAsignar.length > 0 && (
           <section style={{ marginTop: 26 }}>
             <SectionLabel>Sin analista activo</SectionLabel>
@@ -603,20 +802,12 @@ export default function SimuladorReorg() {
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 8, flexWrap: "wrap" }}>
                 <div>
                   <div style={{ fontSize: 14, fontWeight: 700, color: C.navy }}>Sin asignar</div>
-                  <div style={{ fontSize: 11, color: C.txt2 }}>Clientes cuyo analista actual fue excluido del escenario. Reasignalos antes de armar el plan.</div>
+                  <div style={{ fontSize: 11, color: C.txt2 }}>Clientes cuyo analista actual fue excluido del escenario.</div>
                 </div>
                 <Badge color={C.warn}>{formatN(sinAsignar.n)} clientes</Badge>
               </div>
               <div style={{ marginTop: 10, display: "flex", flexWrap: "wrap", gap: 6 }}>
-                {clientesSinAsignar.map(c => {
-                  const sel = seleccionado === c.id;
-                  return (
-                    <button key={c.id} onClick={() => setSeleccionado(sel ? null : c.id)} title={`Estaba en ${asignacion[c.id]} · Complejidad ${c.complejidad} · ${c.pays} pays`}
-                      style={{ ...font, cursor: "pointer", fontSize: 11.5, fontWeight: 600, padding: "4px 10px", borderRadius: 9999, background: sel ? C.celeste : "rgba(245,158,11,0.12)", color: sel ? "#FFF" : C.navy, border: sel ? `1px solid ${C.celesteDark}` : "1px solid rgba(245,158,11,0.45)" }}>
-                      {c.nombre} <span style={{ opacity: 0.65 }}>·C{c.complejidad}</span>
-                    </button>
-                  );
-                })}
+                {clientesSinAsignar.map(c => chipCliente(c, { movido: false, sel: seleccionado === c.id, tieneEquipo: false, esEquipo: false }))}
               </div>
             </div>
           </section>
@@ -632,16 +823,19 @@ export default function SimuladorReorg() {
                 const base = baseScores[a.nombre] ?? 0;
                 const delta = s.score - base;
                 const sem = semaforo(s.score, s.n);
-                // Clientes "visibles" en esta tarjeta: los asignados directamente +
-                // los del equipo que comparten (Toyota cuando este analista es Franco/Eileen/Laura).
                 const clientesDirectos = incluidos.filter(c => asignacion[c.id] === a.nombre);
                 const clientesEquipo = incluidos.filter(c => c.equipo
                   && asignacion[c.id] === c.consultor
                   && a.nombre !== c.consultor
                   && c.equipo.includes(a.nombre)
                   && nombresVisibles.has(c.consultor));
+                const isDragTarget = dragCliente && dragOver === a.nombre;
                 return (
-                  <div key={a.nombre} style={{ position: "relative", background: "#FFF", border: `1px solid ${C.borde}`, borderRadius: 14, boxShadow: "0 1px 4px rgba(30,58,95,0.06)", overflow: "hidden" }}>
+                  <div key={a.nombre}
+                    onDragOver={e => { if (!dragCliente) return; e.preventDefault(); e.dataTransfer.dropEffect = "move"; setDragOver(a.nombre); }}
+                    onDragLeave={() => { if (dragOver === a.nombre) setDragOver(null); }}
+                    onDrop={e => { e.preventDefault(); if (dragCliente) mover(dragCliente, a.nombre); setDragCliente(null); setDragOver(null); }}
+                    style={{ position: "relative", background: isDragTarget ? "rgba(0,172,212,0.05)" : "#FFF", border: isDragTarget ? `2px solid ${C.celeste}` : `1px solid ${C.borde}`, borderRadius: 14, boxShadow: isDragTarget ? `0 0 0 3px rgba(0,172,212,0.15)` : "0 1px 4px rgba(30,58,95,0.06)", overflow: "hidden", transition: "border 0.12s, box-shadow 0.12s" }}>
                     <div style={{ height: 3, background: sem.color === C.gris ? C.borde : sem.color }} />
                     <div style={{ padding: "13px 15px" }}>
                       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 8 }}>
@@ -666,31 +860,19 @@ export default function SimuladorReorg() {
                         <span>Σ pays <strong style={{ color: C.navy }}>{Math.round(s.pays).toLocaleString("es-AR")}</strong></span>
                       </div>
                       <div style={{ marginTop: 10, display: "flex", flexWrap: "wrap", gap: 6 }}>
-                        {clientesDirectos.map(c => {
-                          const movido = asignacion[c.id] !== c.consultor;
-                          const sel = seleccionado === c.id;
-                          const tieneEquipo = c.equipo && asignacion[c.id] === c.consultor;
-                          return (
-                            <button key={c.id} onClick={() => setSeleccionado(sel ? null : c.id)} title={`Complejidad ${c.complejidad} · ${c.pays} pays · ${c.tipo || "tipo s/d"}${movido ? ` · venía de ${c.consultor}` : ""}${tieneEquipo ? ` · equipo: ${[c.consultor, ...c.equipo].join(", ")}` : ""}`}
-                              style={{ ...font, cursor: "pointer", fontSize: 11.5, fontWeight: 600, padding: "4px 10px", borderRadius: 9999,
-                                background: sel ? C.celeste : movido ? "rgba(0,172,212,0.12)" : C.off,
-                                color: sel ? "#FFF" : C.navy,
-                                border: sel ? `1px solid ${C.celesteDark}` : movido ? "1px solid rgba(0,172,212,0.45)" : `1px solid ${C.borde}` }}>
-                              {c.nombre} <span style={{ opacity: 0.65 }}>·C{c.complejidad}</span>{tieneEquipo && " 👥"}{movido && " ↩"}
-                            </button>
-                          );
-                        })}
-                        {clientesEquipo.map(c => {
-                          const sel = seleccionado === c.id;
-                          return (
-                            <button key={`eq-${c.id}`} onClick={() => setSeleccionado(sel ? null : c.id)} title={`Apoyo del equipo · Líder: ${c.consultor} · Complejidad ${c.complejidad} · ${c.pays} pays`}
-                              style={{ ...font, cursor: "pointer", fontSize: 11.5, fontWeight: 600, padding: "4px 10px", borderRadius: 9999, background: sel ? C.celeste : "rgba(140,131,123,0.10)", color: sel ? "#FFF" : C.txt2, border: sel ? `1px solid ${C.celesteDark}` : `1px dashed ${C.borde}`, fontStyle: "italic" }}>
-                              {c.nombre} <span style={{ opacity: 0.65 }}>·equipo de {c.consultor}</span>
-                            </button>
-                          );
-                        })}
+                        {clientesDirectos.map(c => chipCliente(c, {
+                          movido: asignacion[c.id] !== c.consultor,
+                          sel: seleccionado === c.id,
+                          tieneEquipo: !!(c.equipo && asignacion[c.id] === c.consultor),
+                          esEquipo: false,
+                        }))}
+                        {clientesEquipo.map(c => chipCliente(c, {
+                          movido: false, sel: seleccionado === c.id, tieneEquipo: false, esEquipo: true, lider: c.consultor,
+                        }))}
                         {clientesDirectos.length === 0 && clientesEquipo.length === 0 && (
-                          <span style={{ fontSize: 11.5, color: C.txt3 }}>Sin clientes asignados — podés moverle alguno.</span>
+                          <span style={{ fontSize: 11.5, color: isDragTarget ? C.celeste : C.txt3, fontWeight: isDragTarget ? 700 : 400 }}>
+                            {isDragTarget ? "Soltar acá →" : "Sin clientes asignados — podés moverle alguno."}
+                          </span>
                         )}
                       </div>
                     </div>
@@ -701,7 +883,7 @@ export default function SimuladorReorg() {
           </section>
         ))}
 
-        {/* Carga rápida de cut-offs (v2): defaults + semáforo + pegado desde Excel */}
+        {/* Carga rápida de cut-offs (v2) */}
         <PanelCutoffs
           clientes={incluidos}
           configClientes={configClientes}
@@ -745,7 +927,7 @@ export default function SimuladorReorg() {
           </div>
           <div style={{ padding: "14px 18px", fontSize: 13, color: C.txt2 }}>
             {cambios.length === 0 ? (
-              <span>Todavía no hay movimientos. Tocá un cliente en cualquier tarjeta y elegí a quién moverlo. Acá se va a armar la lista para aplicar a mano en Monday.</span>
+              <span>Todavía no hay movimientos. Tocá un cliente o arrastralo a otra tarjeta. Acá se va a armar la lista para aplicar a mano en Monday.</span>
             ) : (
               <>
                 <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12.5 }}>

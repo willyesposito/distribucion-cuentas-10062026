@@ -128,16 +128,16 @@ export default function HeatmapCarga({
   // Escala de color: techo = max(maxHorasDia, 8h) para que un solo evento liviano no se vea rojo.
   const max = Math.max(carga.maxHorasDia, 8);
 
-  // Gradiente celeste #00ACD4 → amarillo #F59E0B → rojo #E85518
+  // Gradiente verde #22C55E → amarillo #F59E0B → rojo #E85518
   const colorCelda = (h) => {
     if (!h) return "transparent";
     const t = Math.min(1, h / max);
     let r, g, b;
     if (t < 0.5) {
       const f = t / 0.5;
-      r = Math.round(0 + f * 245);
-      g = Math.round(172 + f * (158 - 172));
-      b = Math.round(212 + f * (11 - 212));
+      r = Math.round(34 + f * (245 - 34));
+      g = Math.round(197 + f * (158 - 197));
+      b = Math.round(94 + f * (11 - 94));
     } else {
       const f = (t - 0.5) / 0.5;
       r = Math.round(245 + f * (232 - 245));
@@ -382,7 +382,7 @@ export default function HeatmapCarga({
             {/* Leyenda */}
             <div style={{ marginTop: 10, display: "flex", gap: 14, flexWrap: "wrap", fontSize: 11, color: C.txt2, alignItems: "center" }}>
               <span>
-                <span style={{ display: "inline-block", width: 12, height: 12, background: C.celeste, borderRadius: 2, verticalAlign: "middle", marginRight: 4 }} /> Liviano
+                <span style={{ display: "inline-block", width: 12, height: 12, background: C.ok, borderRadius: 2, verticalAlign: "middle", marginRight: 4 }} /> Liviano
               </span>
               <span>
                 <span style={{ display: "inline-block", width: 12, height: 12, background: C.warn, borderRadius: 2, verticalAlign: "middle", marginRight: 4 }} /> Medio

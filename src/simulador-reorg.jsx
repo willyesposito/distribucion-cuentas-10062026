@@ -1,5 +1,6 @@
 import { useState, useMemo } from "react";
 import HeatmapCarga from "./HeatmapCarga.jsx";
+import PanelCutoffs from "./PanelCutoffs.jsx";
 import feriadosData from "../data/feriados-ar.json";
 
 const FERIADOS = new Set(feriadosData.feriados);
@@ -105,14 +106,17 @@ const INSTANCIAS_QUINCENA = (slaQ) => [
   { id: rid(), nombre: "Aprobación",     slaHabiles: slaQ },
 ];
 
-function genLiquidaciones(tipo, slaQ) {
+// IDs de liquidación determinísticos (clienteId:tipo): los cut-offs se guardan
+// keyed por liq.id, así que con IDs estables sobreviven a regeneraciones del tipo
+// de liquidación y sirven de clave para el import por Excel y los escenarios (paso 4).
+function genLiquidaciones(clienteId, tipo, slaQ) {
   const liqs = [];
   if (tipo === "mensual" || tipo === "ambos") {
-    liqs.push({ id: rid(), etiqueta: "Mensual", instancias: INSTANCIAS_MENSUAL() });
+    liqs.push({ id: `${clienteId}:mensual`, etiqueta: "Mensual", instancias: INSTANCIAS_MENSUAL() });
   }
   if (tipo === "quincenal" || tipo === "ambos") {
-    liqs.push({ id: rid(), etiqueta: "Quincena 1", instancias: INSTANCIAS_QUINCENA(slaQ) });
-    liqs.push({ id: rid(), etiqueta: "Quincena 2", instancias: INSTANCIAS_QUINCENA(slaQ) });
+    liqs.push({ id: `${clienteId}:q1`, etiqueta: "Quincena 1", instancias: INSTANCIAS_QUINCENA(slaQ) });
+    liqs.push({ id: `${clienteId}:q2`, etiqueta: "Quincena 2", instancias: INSTANCIAS_QUINCENA(slaQ) });
   }
   return liqs;
 }
@@ -156,15 +160,24 @@ export default function SimuladorReorg() {
   const [verAnalistas, setVerAnalistas] = useState(false);
   const [slaQuincena, setSlaQuincena] = useState(1); // días hábiles por defecto entre instancias quincenales (24 hs = 1)
   const [cutoffs, setCutoffs] = useState({}); // {liqId: "YYYY-MM-DD"} — manual; alimenta el heatmap
+  const [cutoffsEstado, setCutoffsEstado] = useState({}); // {liqId: "confirmado"|"default"} — "default" = fecha tentativa de la carga rápida, pendiente de confirmar
   const [ajustarPorComplejidad, setAjustarPorComplejidad] = useState(false);
   const [configClientes, setConfigClientes] = useState(() => {
     return Object.fromEntries(CLIENTES.map(c => {
       const tipoLiq = inferirTipo(c.tipo);
-      return [c.id, { tipoLiq, liquidaciones: genLiquidaciones(tipoLiq, 1) }];
+      return [c.id, { tipoLiq, liquidaciones: genLiquidaciones(c.id, tipoLiq, 1) }];
     }));
   });
 
   const incluidos = useMemo(() => CLIENTES.filter(c => !(excluirToyota && c.distorsiona)), [excluirToyota]);
+
+  // Cut-offs con fecha default (tentativa) vigentes — alimenta la advertencia del heatmap:
+  // pico y choques calculados sobre defaults no son datos reales hasta confirmarlos.
+  const nSinConfirmar = useMemo(() => {
+    const vigentes = new Set();
+    for (const c of incluidos) for (const l of (configClientes[c.id]?.liquidaciones || [])) vigentes.add(l.id);
+    return Object.entries(cutoffsEstado).filter(([id, e]) => e === "default" && cutoffs[id] && vigentes.has(id)).length;
+  }, [incluidos, configClientes, cutoffsEstado, cutoffs]);
 
   const analistasVisibles = useMemo(
     () => ANALISTAS.filter(a => !analistasExcluidos.has(a.nombre)),
@@ -245,8 +258,10 @@ export default function SimuladorReorg() {
   };
   const reiniciar = () => { setAsignacion(BASE_ASIGNACION); setSeleccionado(null); };
 
-  // Setter de cut-off por liquidación (consumido por el panel del cliente y el heatmap).
-  const setCutoff = (liqId, isoFecha) => {
+  // Setter de cut-off por liquidación (consumido por el panel del cliente, el panel
+  // de carga rápida y el heatmap). estado: "confirmado" (dato real, default al editar
+  // a mano) o "default" (tentativo, generado por "Aplicar defaults").
+  const setCutoff = (liqId, isoFecha, estado = "confirmado") => {
     setCutoffs(prev => {
       if (!isoFecha) {
         const { [liqId]: _, ...rest } = prev;
@@ -254,21 +269,54 @@ export default function SimuladorReorg() {
       }
       return { ...prev, [liqId]: isoFecha };
     });
+    setCutoffsEstado(prev => {
+      if (!isoFecha) {
+        const { [liqId]: _, ...rest } = prev;
+        return rest;
+      }
+      return { ...prev, [liqId]: estado };
+    });
+  };
+  const confirmarCutoff = (liqId) => setCutoffsEstado(prev => (prev[liqId] ? { ...prev, [liqId]: "confirmado" } : prev));
+  // Aplica varios cut-offs de una (defaults del panel o pegado desde Excel).
+  const aplicarCutoffsLote = (entradas, estado) => {
+    if (!entradas || Object.keys(entradas).length === 0) return;
+    setCutoffs(prev => ({ ...prev, ...entradas }));
+    setCutoffsEstado(prev => {
+      const next = { ...prev };
+      for (const id of Object.keys(entradas)) next[id] = estado;
+      return next;
+    });
+  };
+
+  // Borra cut-offs (y su estado) de liquidaciones de un cliente que ya no existen,
+  // para que un id determinístico reusado (p. ej. :extra-1 tras eliminar y volver a
+  // agregar) no "resucite" una fecha vieja como confirmada. El separador ":" evita
+  // que un clienteId que sea prefijo de otro matchee de más.
+  const podarCutoffsHuerfanos = (clienteId, nuevasLiqs) => {
+    const validos = new Set(nuevasLiqs.map(l => l.id));
+    const esHuerfano = (id) => id.startsWith(`${clienteId}:`) && !validos.has(id);
+    const podar = (obj) => {
+      let cambio = false;
+      const next = {};
+      for (const [k, v] of Object.entries(obj)) { if (esHuerfano(k)) cambio = true; else next[k] = v; }
+      return cambio ? next : obj;
+    };
+    setCutoffs(prev => podar(prev));
+    setCutoffsEstado(prev => podar(prev));
   };
 
   // ---- Acciones sobre configClientes (tipo de liquidación + instancias) ----
   const setTipoLiqCliente = (clienteId, nuevoTipo) => {
-    setConfigClientes(prev => ({
-      ...prev,
-      [clienteId]: { tipoLiq: nuevoTipo, liquidaciones: genLiquidaciones(nuevoTipo, slaQuincena) },
-    }));
+    const nuevas = genLiquidaciones(clienteId, nuevoTipo, slaQuincena);
+    podarCutoffsHuerfanos(clienteId, nuevas);
+    setConfigClientes(prev => ({ ...prev, [clienteId]: { tipoLiq: nuevoTipo, liquidaciones: nuevas } }));
   };
   const regenerarDefault = (clienteId) => {
     const tipoLiq = configClientes[clienteId]?.tipoLiq || "ninguno";
-    setConfigClientes(prev => ({
-      ...prev,
-      [clienteId]: { tipoLiq, liquidaciones: genLiquidaciones(tipoLiq, slaQuincena) },
-    }));
+    const nuevas = genLiquidaciones(clienteId, tipoLiq, slaQuincena);
+    podarCutoffsHuerfanos(clienteId, nuevas);
+    setConfigClientes(prev => ({ ...prev, [clienteId]: { tipoLiq, liquidaciones: nuevas } }));
   };
   const editarInstancia = (clienteId, liqId, instId, campo, valor) => {
     setConfigClientes(prev => {
@@ -312,6 +360,7 @@ export default function SimuladorReorg() {
     });
   };
   const eliminarLiquidacion = (clienteId, liqId) => {
+    setCutoff(liqId, ""); // limpiar su cut-off: si luego se reusa el id (:extra-N) no debe heredar la fecha
     setConfigClientes(prev => {
       const cfg = prev[clienteId];
       if (!cfg) return prev;
@@ -322,7 +371,8 @@ export default function SimuladorReorg() {
     setConfigClientes(prev => {
       const cfg = prev[clienteId];
       if (!cfg) return prev;
-      const nueva = { id: rid(), etiqueta: "Liquidación adicional", instancias: INSTANCIAS_MENSUAL() };
+      const usados = cfg.liquidaciones.map(l => { const m = /:extra-(\d+)$/.exec(String(l.id)); return m ? +m[1] : 0; });
+      const nueva = { id: `${clienteId}:extra-${Math.max(0, ...usados) + 1}`, etiqueta: "Liquidación adicional", instancias: INSTANCIAS_MENSUAL() };
       return { ...prev, [clienteId]: { ...cfg, liquidaciones: [...cfg.liquidaciones, nueva] } };
     });
   };
@@ -353,9 +403,19 @@ export default function SimuladorReorg() {
   const clienteSel = seleccionado ? CLIENTES.find(c => c.id === seleccionado) : null;
   const cfgSel = clienteSel ? configClientes[clienteSel.id] : null;
 
+  // El input numérico y el slider editan el mismo valor crudo 0-100;
+  // al lado se muestra el % ya normalizado (lo que realmente pesa en el score).
   const slider = (key, label) => (
     <label key={key} style={{ display: "flex", flexDirection: "column", gap: 4, minWidth: 150, flex: 1 }}>
-      <span style={{ fontSize: 12, fontWeight: 600, color: C.navy }}>{label} <span style={{ color: C.celeste, fontWeight: 700 }}>{Math.round(100 * pesos[key] / sumaPesos)}%</span></span>
+      <span style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, fontWeight: 600, color: C.navy }}>
+        {label}
+        <input
+          type="number" min="0" max="100" value={pesos[key]}
+          onChange={e => setPesos(p => ({ ...p, [key]: Math.max(0, Math.min(100, Math.round(+e.target.value || 0))) }))}
+          style={{ ...font, width: 52, padding: "3px 6px", border: `1px solid ${C.borde}`, borderRadius: 6, fontSize: 12, fontWeight: 700, color: C.navy }}
+        />
+        <span style={{ color: C.celeste, fontWeight: 700 }}>= {Math.round(100 * pesos[key] / sumaPesos)}%</span>
+      </span>
       <input type="range" min="0" max="100" value={pesos[key]} onChange={e => setPesos(p => ({ ...p, [key]: +e.target.value }))} style={{ accentColor: C.celeste }} />
     </label>
   );
@@ -641,6 +701,20 @@ export default function SimuladorReorg() {
           </section>
         ))}
 
+        {/* Carga rápida de cut-offs (v2): defaults + semáforo + pegado desde Excel */}
+        <PanelCutoffs
+          clientes={incluidos}
+          configClientes={configClientes}
+          cutoffs={cutoffs}
+          cutoffsEstado={cutoffsEstado}
+          setCutoff={setCutoff}
+          confirmarCutoff={confirmarCutoff}
+          aplicarLote={aplicarCutoffsLote}
+          abrirCliente={setSeleccionado}
+          C={C}
+          font={font}
+        />
+
         {/* Heatmap de carga (v2) */}
         <HeatmapCarga
           clientes={incluidos}
@@ -654,7 +728,7 @@ export default function SimuladorReorg() {
           ordenJefaturas={ORDEN_JEFATURAS}
           ajustarPorComplejidad={ajustarPorComplejidad}
           setAjustarPorComplejidad={setAjustarPorComplejidad}
-          abrirCliente={setSeleccionado}
+          nSinConfirmar={nSinConfirmar}
           C={C}
           font={font}
         />

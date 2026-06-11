@@ -1,7 +1,6 @@
 import { useMemo, useState, Fragment } from "react";
 import {
   generarEventosCliente,
-  liquidacionesSinCutoff,
   cargaDiaria,
   detectarChoques,
   indicadores,
@@ -28,12 +27,11 @@ export default function HeatmapCarga({
   ordenJefaturas,
   ajustarPorComplejidad,
   setAjustarPorComplejidad,
-  abrirCliente,
+  nSinConfirmar = 0,
   C,
   font,
 }) {
   const [expanded, setExpanded] = useState(true);
-  const [verPendientes, setVerPendientes] = useState(true);
   const [popover, setPopover] = useState(null);
 
   // Resuelve eventos para una asignación dada, repartiendo entre integrantes si es equipo (Toyota).
@@ -126,15 +124,6 @@ export default function HeatmapCarga({
     }
     return gs;
   }, [ordenJefaturas, analistasVisibles, eventosAsig]);
-
-  // Pendientes (clientes con liqs sin cut-off).
-  const pendientes = useMemo(
-    () =>
-      clientes
-        .map((c) => ({ cliente: c, liqs: liquidacionesSinCutoff(configClientes[c.id], cutoffs) }))
-        .filter((p) => p.liqs.length > 0),
-    [clientes, configClientes, cutoffs]
-  );
 
   // Escala de color: techo = max(maxHorasDia, 8h) para que un solo evento liviano no se vea rojo.
   const max = Math.max(carga.maxHorasDia, 8);
@@ -258,36 +247,17 @@ export default function HeatmapCarga({
               </div>
             </div>
 
-            {/* Pendientes */}
-            {pendientes.length > 0 && (
-              <div style={{ marginBottom: 12, background: "rgba(245,158,11,0.08)", border: "1px solid rgba(245,158,11,0.32)", borderRadius: 10, padding: "10px 14px" }}>
-                <button
-                  onClick={() => setVerPendientes((v) => !v)}
-                  style={{ ...font, background: "none", border: "none", color: "#B07408", cursor: "pointer", fontSize: 11.5, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.06em", padding: 0 }}
-                >
-                  Pendientes de cut-off ({pendientes.length}) {verPendientes ? "▾" : "▸"}
-                </button>
-                {verPendientes && (
-                  <div style={{ marginTop: 8, display: "flex", flexWrap: "wrap", gap: 6 }}>
-                    {pendientes.map((p) => (
-                      <button
-                        key={p.cliente.id}
-                        onClick={() => abrirCliente(p.cliente.id)}
-                        title={`Sin cut-off: ${p.liqs.join(", ")}`}
-                        style={{ ...font, background: "rgba(245,158,11,0.18)", border: "1px solid rgba(245,158,11,0.5)", color: "#7A5104", borderRadius: 9999, padding: "4px 12px", fontSize: 11.5, fontWeight: 600, cursor: "pointer" }}
-                      >
-                        {p.cliente.nombre} <span style={{ opacity: 0.7 }}>({p.liqs.length})</span>
-                      </button>
-                    ))}
-                  </div>
-                )}
+            {/* Advertencia: cut-offs default sin confirmar (cargados por el panel de carga rápida) */}
+            {nSinConfirmar > 0 && (
+              <div style={{ marginBottom: 12, background: "rgba(245,158,11,0.08)", border: "1px solid rgba(245,158,11,0.32)", borderRadius: 10, padding: "9px 14px", fontSize: 12, fontWeight: 600, color: "#7A5104" }}>
+                ⚠ {nSinConfirmar} cut-off{nSinConfirmar === 1 ? "" : "s"} con fecha default sin confirmar: el pico y los choques incluyen fechas tentativas. Confirmalas en el panel «Carga de cut-offs».
               </div>
             )}
 
             {/* Heatmap */}
             {fechas.length === 0 ? (
               <div style={{ background: C.off, border: `1px dashed ${C.borde}`, borderRadius: 10, padding: "22px 14px", fontSize: 13, color: C.txt2, textAlign: "center" }}>
-                Sin eventos generados — cargá la fecha de <strong>Cut Off</strong> en al menos una liquidación para empezar.
+                Sin eventos generados — cargá cut-offs en el panel <strong>Carga de cut-offs</strong> de arriba (defaults, pegado desde Excel o fecha a fecha) para empezar.
               </div>
             ) : (
               <div style={{ border: `1px solid ${C.borde}`, borderRadius: 10, overflow: "auto", maxHeight: 540 }}>
